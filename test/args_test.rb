@@ -598,6 +598,27 @@ class ArgsTest < Minitest::Test
             value.type = parse_type("Array[Integer]")
           when SendArgs::PositionalArgs::NodeParamPair
             pairs[value.node] = value.param.type
+          when SendArgs::PositionalArgs::NodeTypePair
+            pairs[value.node] = value.type
+          else
+            raise
+          end
+        end
+
+        assert_equal parse_type("Integer"), pairs[args.arguments[0]]
+        assert_equal parse_type("String"), pairs[args.arguments[1]]
+        assert_equal parse_type("String"), pairs[args.arguments[2]]
+      end
+
+      SendArgs.new(node: node, arguments: args, type: parse_method_type("(Integer) -> void")).tap do |args|
+        pairs = {}
+
+        args.each() do |value|
+          case value
+          when SendArgs::PositionalArgs::SplatArg
+            value.type = parse_type("Array[Integer]")
+          when SendArgs::PositionalArgs::NodeParamPair
+            pairs[value.node] = value.param.type
           when SendArgs::PositionalArgs::UnexpectedArg
             pairs[value.node] = :unexpected
           else

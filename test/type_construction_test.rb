@@ -2513,6 +2513,53 @@ a.gen(*b)
     end
   end
 
+  def test_splat_arg_array_to_positional_params
+    with_checker <<-EOF do |checker|
+class A
+  def initialize: () -> untyped
+  def gen: (String, Integer, ?Integer) -> String
+end
+    EOF
+      source = parse_ruby(<<-'EOF')
+a = A.new
+b = [1] #: Array[Integer]
+a.gen("1", *b)
+      EOF
+
+      with_standard_construction(checker, source) do |construction, typing|
+        construction.synthesize(source.node)
+
+        assert_no_error typing
+      end
+    end
+  end
+
+  def test_splat_arg_array_to_positional_params_mismatch
+    with_checker <<-EOF do |checker|
+class A
+  def initialize: () -> untyped
+  def gen: (String, Integer) -> String
+end
+    EOF
+      source = parse_ruby(<<-'EOF')
+a = A.new
+b = ["1"] #: Array[String]
+a.gen("1", *b)
+      EOF
+
+      with_standard_construction(checker, source) do |construction, typing|
+        construction.synthesize(source.node)
+
+        assert_typing_error(typing, size: 1) do |errors|
+          assert_any!(errors) do |error|
+            assert_instance_of Diagnostic::Ruby::ArgumentTypeMismatch, error
+            assert_equal parse_type("::Array[::Integer]"), error.expected
+          end
+        end
+      end
+    end
+  end
+
   def test_self
     with_checker <<-EOF do |checker|
 class Hoge
