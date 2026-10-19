@@ -245,6 +245,10 @@ class TypeConstructionTest < Minitest::Test
 
   def test_splat_arg2: () -> untyped
 
+  def test_splat_arg_array_to_positional_params: () -> untyped
+
+  def test_splat_arg_array_to_positional_params_mismatch: () -> untyped
+
   def test_self: () -> untyped
 
   def test_self_send: () -> untyped
