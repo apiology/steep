@@ -21,7 +21,7 @@ Gem::Specification.new do |spec|
   skip_dirs = %w(test spec features smoke sig gemfile_steep .github .vscode)
   skip_files = %w(Gemfile Gemfile.lock rbs_collection.steep.yaml rbs_collection.steep.lock.yaml)
 
-  spec.files         = `git ls-files -z`.split("\x0").reject {|f|
+  spec.files         = IO.popen({ 'GIT_DIR' => nil, 'GIT_INDEX_FILE' => nil, 'GIT_WORK_TREE' => nil }, %w[git ls-files -z], chdir: __dir__, &:read).split("\x0").reject {|f|
     skip_dirs.any? {|dir| f.start_with?(dir + File::SEPARATOR) } || skip_files.include?(f)
   }
 
