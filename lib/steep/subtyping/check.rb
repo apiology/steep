@@ -3,6 +3,13 @@ module Steep
     class Check
       ABORT_LIMIT = ENV.fetch("STEEP_SUBTYPING_ABORT_LIMIT", 50).to_i
 
+      # The maximum number of tuples that a tuple with union elements is split into,
+      # when it is checked against a union of tuples.
+      #
+      # Each tuple is checked against every member of the union, so the cost grows with
+      # the product of the element union sizes. 32 covers five optional elements.
+      TUPLE_DISTRIBUTION_LIMIT = 32
+
       attr_reader :builder
       attr_reader :cache
 
@@ -456,6 +463,14 @@ module Steep
                 check_type(rel)
               end
             end
+          end
+
+        when relation.sub_type.is_a?(AST::Types::Tuple) &&
+            relation.super_type.is_a?(AST::Types::Union) &&
+            (distributed = distribute_tuple(relation.sub_type, relation.super_type))
+          # `[A | B, C] <: [A, C] | [B, C]` holds because the tuple is equivalent to `[A, C] | [B, C]`.
+          Expand(relation) do
+            check_type(Relation.new(sub_type: distributed, super_type: relation.super_type))
           end
 
         when relation.super_type.is_a?(AST::Types::Union)
@@ -1028,6 +1043,26 @@ module Steep
         else
           pairs
         end
+      end
+
+      # Returns the union of tuples equivalent to `tuple`, by distributing its union elements.
+      #
+      # Returns `nil` if `tuple` has no union element, `union` has no tuple of the same size,
+      # or the number of tuples exceeds `TUPLE_DISTRIBUTION_LIMIT`.
+      def distribute_tuple(tuple, union)
+        return unless tuple.types.any? { _1.is_a?(AST::Types::Union) }
+        return unless union.types.any? { _1.is_a?(AST::Types::Tuple) && _1.types.size == tuple.types.size }
+
+        element_types = tuple.types.map do |type|
+          type.is_a?(AST::Types::Union) ? type.types : [type]
+        end
+
+        return if element_types.inject(1) { _1 * _2.size } > TUPLE_DISTRIBUTION_LIMIT
+
+        first, *rest = element_types
+        first or raise
+        tuples = first.product(*rest).map { AST::Types::Tuple.new(types: _1) }
+        AST::Types::Union.build(types: tuples)
       end
 
       def Relation(sub, sup)

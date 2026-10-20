@@ -3,6 +3,8 @@ module Steep
     class Check
       ABORT_LIMIT: Integer
 
+      TUPLE_DISTRIBUTION_LIMIT: Integer
+
       attr_reader builder: Interface::Builder
 
       attr_reader cache: Cache
@@ -131,6 +133,12 @@ module Steep
       # Returns the shortest type paths for one of the _unknown_ type variables.
       # Returns nil if there is no path.
       def hole_path: (AST::Types::t `type`, ?Array[AST::Types::t] path) -> Array[AST::Types::t]?
+
+      # Returns the union of tuples equivalent to `tuple`, by distributing its union elements.
+      #
+      # Returns `nil` if `tuple` has no union element, `union` has no tuple of the same size,
+      # or the number of tuples exceeds `TUPLE_DISTRIBUTION_LIMIT`.
+      def distribute_tuple: (AST::Types::Tuple tuple, AST::Types::Union union) -> AST::Types::t?
 
       def Relation: [T < Relation::_Subject] (T sub, T sup) -> Relation[T]
     end

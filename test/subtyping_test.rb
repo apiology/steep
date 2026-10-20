@@ -727,6 +727,32 @@ end
     end
   end
 
+  def test_tuple_with_union_element_to_union_of_tuples
+    with_checker do |checker|
+      assert_success_check checker, "[::String?, ::Integer]", "[::String, ::Integer] | [nil, ::Integer]"
+      assert_success_check checker, "[::String | ::Symbol, ::Integer | nil]", "[::String, ::Integer] | [::Symbol, ::Integer?] | [::String, nil]"
+      assert_success_check checker, "[::String?, ::Integer]", "[::String, ::Integer] | [nil, ::Integer] | ::Symbol"
+
+      assert_fail_check checker, "[::String | ::Symbol, ::Integer]", "[::String, ::Integer] | [nil, ::Integer]"
+      assert_fail_check checker, "[::String | ::Symbol, ::Integer?]", "[::String, ::Integer] | [::Symbol, ::Integer?]"
+      assert_fail_check checker, "[::String?, ::Integer]", "[::String, ::Integer, nil] | [nil, ::Integer, nil]"
+    end
+  end
+
+  def test_tuple_with_union_element_to_union_of_tuples__limit
+    with_checker do |checker|
+      # 2^6 combinations exceed the limit, so the tuple is not split.
+      assert_fail_check checker,
+                        "[::String?, ::String?, ::String?, ::String?, ::String?, ::String?]",
+                        "[::String, ::String?, ::String?, ::String?, ::String?, ::String?] | [nil, ::String?, ::String?, ::String?, ::String?, ::String?]"
+
+      # 2^5 combinations are split.
+      assert_success_check checker,
+                           "[::String?, ::String?, ::String?, ::String?, ::String?]",
+                           "[::String, ::String?, ::String?, ::String?, ::String?] | [nil, ::String?, ::String?, ::String?, ::String?]"
+    end
+  end
+
   def test_expand_alias
     with_checker <<-EOS do |checker|
 type foo = String | Integer

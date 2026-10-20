@@ -4897,4 +4897,28 @@ class TypeCheckTest < Minitest::Test
       YAML
     )
   end
+
+  def test_tuple_with_union_element_returned_as_union_of_tuples
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class TupleWithUnionElement
+            def f: (String? x) -> ([String, Integer] | [nil, Integer])
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          class TupleWithUnionElement
+            def f(x) = [x, 1]
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    )
+  end
 end
