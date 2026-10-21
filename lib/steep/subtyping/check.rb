@@ -8,7 +8,8 @@ module Steep
       #
       # Each tuple is checked against every member of the union, so the cost grows with
       # the product of the element union sizes. 32 covers five optional elements.
-      TUPLE_DISTRIBUTION_LIMIT = 32
+      # Set $STEEP_SUBTYPING_TUPLE_DISTRIBUTION_LIMIT to override it.
+      TUPLE_DISTRIBUTION_LIMIT = ENV.fetch("STEEP_SUBTYPING_TUPLE_DISTRIBUTION_LIMIT", 32).to_i
 
       attr_reader :builder
       attr_reader :cache
