@@ -5276,8 +5276,6 @@ module Steep
         end
       end
 
-      key_types.reject! {|ty| ty.is_a?(AST::Types::Any) }
-      value_types.reject! {|ty| ty.is_a?(AST::Types::Any) }
 
       key_types << AST::Builtin.any_type if key_types.empty?
       value_types << AST::Builtin.any_type if value_types.empty?

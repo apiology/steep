@@ -451,6 +451,8 @@ class TypeConstructionTest < Minitest::Test
 
   def test_hash_type5: () -> untyped
 
+  def test_hash_kwsplat_untyped_value: () -> untyped
+
   def test_hash_union: () -> untyped
 
   def test_hash_with_kwargs: () -> untyped

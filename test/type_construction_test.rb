@@ -4893,6 +4893,24 @@ EOF
     end
   end
 
+  def test_hash_kwsplat_untyped_value
+    with_checker do |checker|
+      source = parse_ruby(<<EOF)
+base = {} #: Hash[String, untyped]
+label = nil #: String?
+h = { **base, "label" => label }
+h["count"] = 1
+EOF
+
+      with_standard_construction(checker, source) do |construction, typing|
+        pair = construction.synthesize(source.node)
+
+        assert_no_error typing
+        assert_equal parse_type("::Hash[::String, untyped]"), pair.context.type_env[:h]
+      end
+    end
+  end
+
   def test_hash_union
     with_checker <<EOF do |checker|
 class Animal
