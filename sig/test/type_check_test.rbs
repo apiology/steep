@@ -317,4 +317,6 @@ class TypeCheckTest < Minitest::Test
   def test_tuple_splat_into_core_methods: () -> untyped
 
   def test_tuple_splat_args: () -> untyped
+
+  def test_tuple_with_union_element_returned_as_union_of_tuples: () -> untyped
 end
