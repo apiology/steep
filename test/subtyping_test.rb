@@ -741,10 +741,19 @@ end
 
   def test_tuple_with_union_element_to_union_of_tuples__limit
     with_checker do |checker|
-      # 2^6 combinations exceed the limit, so the tuple is not split.
+      # 2^6 combinations exceed the limit, so the tuple is not split, and the failure says so.
       assert_fail_check checker,
                         "[::String?, ::String?, ::String?, ::String?, ::String?, ::String?]",
-                        "[::String, ::String?, ::String?, ::String?, ::String?, ::String?] | [nil, ::String?, ::String?, ::String?, ::String?, ::String?]"
+                        "[::String, ::String?, ::String?, ::String?, ::String?, ::String?] | [nil, ::String?, ::String?, ::String?, ::String?, ::String?]" do |result|
+        assert_instance_of Failure::TupleDistributionLimit, result.error
+        assert_equal 64, result.error.size
+        assert_equal 32, result.error.limit
+      end
+
+      # A tuple over the limit still matches a union member without being split.
+      assert_success_check checker,
+                           "[::String?, ::String?, ::String?, ::String?, ::String?, ::String?]",
+                           "[::String?, ::String?, ::String?, ::String?, ::String?, ::String?] | ::Symbol"
 
       # 2^5 combinations are split.
       assert_success_check checker,
