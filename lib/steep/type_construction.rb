@@ -5276,6 +5276,10 @@ module Steep
         end
       end
 
+      # With a hint, drop untyped so the other elements are checked against the hint.
+      # Without one, keep it so the literal is typed with untyped instead of being narrowed.
+      key_types.reject! {|ty| ty.is_a?(AST::Types::Any) } if key_hint
+      value_types.reject! {|ty| ty.is_a?(AST::Types::Any) } if value_hint
 
       key_types << AST::Builtin.any_type if key_types.empty?
       value_types << AST::Builtin.any_type if value_types.empty?

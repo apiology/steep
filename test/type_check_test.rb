@@ -2720,6 +2720,78 @@ class TypeCheckTest < Minitest::Test
     )
   end
 
+  def test_hash_literal_untyped_element_without_hint
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          base = {} #: Hash[String, untyped]
+          label = nil #: String?
+          h = { **base, "label" => label }
+          h["count"] = 1
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    )
+  end
+
+  def test_hash_literal_untyped_element_with_hint
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class C
+            def self.untyped_value: () -> untyped
+            def self.takes_int_hash: (Hash[Symbol, Integer]) -> void
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          C.takes_int_hash({ a: "s", b: C.untyped_value })
+          h = { a: "s", b: C.untyped_value } #: Hash[Symbol, Integer]
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 1
+                character: 17
+              end:
+                line: 1
+                character: 47
+            severity: ERROR
+            message: |-
+              Cannot pass a value of type `::Hash[::Symbol, ::String]` as an argument of type `::Hash[::Symbol, ::Integer]`
+                ::Hash[::Symbol, ::String] <: ::Hash[::Symbol, ::Integer]
+                  ::String <: ::Integer
+                    ::Object <: ::Integer
+                      ::BasicObject <: ::Integer
+            code: Ruby::ArgumentTypeMismatch
+          - range:
+              start:
+                line: 2
+                character: 4
+              end:
+                line: 2
+                character: 59
+            severity: ERROR
+            message: 'Assertion cannot hold: no relationship between inferred type (`::Hash[::Symbol,
+              ::String]`) and asserted type (`::Hash[::Symbol, ::Integer]`)'
+            code: Ruby::FalseAssertion
+      YAML
+    )
+  end
+
   def test_empty_collection
     run_type_check_test(
       signatures: {

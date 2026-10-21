@@ -180,6 +180,10 @@ class TypeCheckTest < Minitest::Test
 
   def test_untyped_hash: () -> untyped
 
+  def test_hash_literal_untyped_element_without_hint: () -> untyped
+
+  def test_hash_literal_untyped_element_with_hint: () -> untyped
+
   def test_empty_collection: () -> untyped
 
   def test_masgn_splat: () -> untyped
