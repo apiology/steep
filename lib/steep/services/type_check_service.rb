@@ -156,7 +156,7 @@ module Steep
         end
       end
 
-      def validate_signature(path:, target:)
+      def validate_signature(path:, target:, content: nil)
         Steep.logger.tagged "#validate_signature(path=#{path})" do
           Steep.measure "validation" do
             service = signature_services.fetch(target.name)
@@ -165,79 +165,68 @@ module Steep
               raise "#{path} is not library nor signature of #{target.name}"
             end
 
+            source = nil #: RBS::Source::RBS | RBS::Source::Ruby | RBS::ParsingError | Diagnostic::Signature::Base | nil
+
             case service.status
             when SignatureService::SyntaxErrorStatus
-              diagnostics = service.status.diagnostics.select do |diag|
-                diag.location or raise
-                Pathname(diag.location.buffer.name) == path &&
-                  (diag.is_a?(Diagnostic::Signature::SyntaxError) || diag.is_a?(Diagnostic::Signature::UnexpectedError))
+              if content
+                # The content given reports its own syntax error: the file in the environment may be older, in its text,
+                # than the content. The type names are not resolved, because the environment may not have the
+                # declarations of the file.
+                source = service.load_rbs_file(path, content, []).source
+                diagnostics = parsing_error_diagnostics(source)
+              else
+                source = service.status.files[path]
+                diagnostics = service.status.diagnostics.select do |diag|
+                  diag.location or raise
+                  Pathname(diag.location.buffer.name) == path &&
+                    (diag.is_a?(Diagnostic::Signature::SyntaxError) || diag.is_a?(Diagnostic::Signature::UnexpectedError))
+                end
               end
 
             when SignatureService::AncestorErrorStatus
+              source = service.status.files[path]
               diagnostics = service.status.diagnostics.select do |diag|
                 diag.location or raise
                 Pathname(diag.location.buffer.name) == path
               end
 
             when SignatureService::LoadedStatus
-              validator = Signature::Validator.new(checker: service.current_subtyping || raise)
-              type_names = service.type_names(paths: Set[path], env: service.latest_env).to_set
+              # The content given is validated as it is, with the environment as it is: the declarations of the file in
+              # the environment may be older, in their text, than the content
+              source =
+                if content
+                  service.resolve_source(path, content)
+                else
+                  service.latest_source(path)
+                end
 
-              unless type_names.empty?
-                Steep.measure2 "Validating #{type_names.size} types" do |sampler|
-                  type_names.each do |type_name|
-                    sampler.sample(type_name.to_s) do
-                      case
-                      when type_name.class?
-                        validator.validate_one_class(type_name)
-                      when type_name.interface?
-                        validator.validate_one_interface(type_name)
-                      when type_name.alias?
-                        validator.validate_one_alias(type_name)
-                      end
+              case source
+              when RBS::Source::RBS, RBS::Source::Ruby
+                validator = Signature::Validator.new(checker: service.current_subtyping || raise)
+
+                Steep.measure "Validating #{path}" do
+                  validator.validate_source(source)
+                end
+
+                # Reports each error at its locations in the file, including the related locations
+                #
+                # The primary location of an error may be in a file that doesn't declare the validated type, like a method
+                # imported from an interface, and the validation of the file doesn't find the error.
+                #
+                diagnostics = validator.each_error.flat_map do |error|
+                  location = error.location or raise
+                  [location, *error.related_locations].filter_map do |loc|
+                    if Pathname(loc.buffer.name) == path
+                      error.relocate(loc)
                     end
                   end
                 end
-              end
-
-              const_decls = service.const_decls(paths: Set[path], env: service.latest_env)
-              unless const_decls.empty?
-                Steep.measure2 "Validating #{const_decls.size} constants" do |sampler|
-                  const_decls.each do |name, entry|
-                    sampler.sample(name.to_s) do
-                      validator.validate_one_constant(name, entry)
-                    end
-                  end
-                end
-              end
-
-              global_decls = service.global_decls(paths: Set[path])
-              unless global_decls.empty?
-                Steep.measure2 "Validating #{global_decls.size} globals" do |sampler|
-                  global_decls.each do |name, entry|
-                    sampler.sample(name.to_s) do
-                      validator.validate_one_global(name, entry)
-                    end
-                  end
-                end
-              end
-
-              # Reports each error at its locations in the file, including the related locations
-              #
-              # The primary location of an error may be in a file that doesn't declare the validated type, like a method
-              # imported from an interface, and the validation of the file doesn't find the error.
-              #
-              diagnostics = validator.each_error.flat_map do |error|
-                location = error.location or raise
-                [location, *error.related_locations].filter_map do |loc|
-                  if Pathname(loc.buffer.name) == path
-                    error.relocate(loc)
-                  end
-                end
+              else
+                diagnostics = parsing_error_diagnostics(source)
               end
             end
 
-            source = service.status.files[path]
             if source.is_a?(RBS::Source::Ruby)
               source.diagnostics.each do |d|
                 diagnostic = Diagnostic::Signature::InlineDiagnostic.new(d)
@@ -247,6 +236,17 @@ module Steep
 
             signature_validation_diagnostics.fetch(target.name)[path] = diagnostics
           end
+        end
+      end
+
+      def parsing_error_diagnostics(source)
+        case source
+        when RBS::ParsingError
+          [Diagnostic::Signature.from_rbs_error(source, factory: _ = nil)]
+        when Diagnostic::Signature::Base
+          [source]
+        else
+          []
         end
       end
 

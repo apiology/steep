@@ -1382,6 +1382,695 @@ class TypeCheckTest < Minitest::Test
     )
   end
 
+  RECORD_UNION_RBS = <<~RBS
+    type position    = { x: Integer, y: Integer }
+    type click_event = { type: "CLICK", position: position }
+    type keyup_event = { type: "KEYUP", key: String }
+    type event       = click_event | keyup_event
+  RBS
+
+  def test_case_when__narrow_record_union
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+
+          case event[:type]
+          when "CLICK"
+            event
+          when "KEYUP"
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "::click_event", typing.type_of(node: node).to_s
+
+      node, * = typing.source.find_nodes(line: 7, column: 2)
+      assert_equal "::keyup_event", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_case_when__narrow_record_union__else
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+
+          case event[:type]
+          when "CLICK"
+            event
+          else
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "::click_event", typing.type_of(node: node).to_s
+
+      node, * = typing.source.find_nodes(line: 7, column: 2)
+      assert_equal "::keyup_event", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_case_when__narrow_record_union__multiple_patterns
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+
+          case event[:type]
+          when "CLICK", "KEYUP"
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "::event", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_if__narrow_record_union
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+
+          if event[:type] == "CLICK"
+            event
+          else
+            event
+          end
+
+          unless event[:type] == "CLICK"
+            event
+          else
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 4, column: 2)
+      assert_equal "::click_event", typing.type_of(node: node).to_s
+
+      node, * = typing.source.find_nodes(line: 6, column: 2)
+      assert_equal "::keyup_event", typing.type_of(node: node).to_s
+
+      node, * = typing.source.find_nodes(line: 10, column: 2)
+      assert_equal "::keyup_event", typing.type_of(node: node).to_s
+
+      node, * = typing.source.find_nodes(line: 12, column: 2)
+      assert_equal "::click_event", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_if__narrow_record_union__nilable_literal_discriminant
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type a = { type: "A" | nil, a: Integer }
+          type b = { type: "B", b: String }
+          type ab = a | b
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          x = (_ = nil) #: ab
+          if x[:type] == "B"
+            x[:b].size
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    )
+  end
+
+  def test_narrow_record_union__non_literal_key_member_kept
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type loose  = { type: String }
+          type strict = { type: "CLICK" }
+          type other  = { type: "OTHER" }
+          type mixed  = loose | strict | other
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          m = (_ = nil) #: mixed
+
+          case m[:type]
+          when "CLICK"
+            m
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "(::loose | ::strict)", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_narrow_record_union__keeps_previously_refined_pure_calls
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type a = { type: "A", ?name: String, ?v: Integer | String }
+          type b = { type: "B", name: String, ?v: Integer | String }
+          type ab = a | b
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          x = (_ = nil) #: ab
+
+          return unless x[:name]
+          case x[:type]
+          when "A"
+            x[:name].size
+          end
+
+          if x[:name] && x[:type] == "A"
+            x[:name].size
+          end
+
+          if x[:v].is_a?(Integer) && x[:type] == "A"
+            x[:v] + 1
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    )
+  end
+
+  def test_narrow_record_union__refined_pure_call_is_narrowed_again_by_receiver
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type a = { type: "A", v: Integer }
+          type b = { type: "B", v: String? }
+          type ab = a | b
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          x = (_ = nil) #: ab
+
+          if x[:v] && x[:type] == "A"
+            x[:v] + 1
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    )
+  end
+
+  def test_narrow_record_union__untyped_member_keeps_refined_pure_call
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type a = { type: "A", v: untyped }
+          type b = { type: "B", v: String }
+          type ab = a | b
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          x = (_ = nil) #: ab
+
+          if x[:v].is_a?(Integer) && x[:type] == "A"
+            x[:v]
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      _, node, * = typing.source.find_nodes(line: 4, column: 2)
+      assert_equal "::Integer", typing.type_of(node: node || raise).to_s
+    end
+  end
+
+  def test_narrow_record_union__optional_key
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type opt_click = { ?type: "CLICK", position: Integer }
+          type opt_keyup = { ?type: "KEYUP", key: String }
+          type opt_event = opt_click | opt_keyup
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: opt_event
+
+          case event[:type]
+          when "CLICK"
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "::opt_click", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_narrow_record_union__alias_preserved
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+
+          case event[:type]
+          when String
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "::event", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_case_when__narrow_record_union__invalidates_dependent_pure_call
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+          event[:position]
+
+          case event[:type]
+          when "CLICK"
+            event[:position]
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 6, column: 18)
+      assert_equal "::position", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_if__narrow_record_union__case_eq_reversed
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+
+          if "CLICK" === event[:type]
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 4, column: 2)
+      assert_equal "::click_event", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_if__narrow_record_union__eq_reversed_no_narrow
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+
+          if "CLICK" == event[:type]
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 4, column: 2)
+      assert_equal "::event", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_if__narrow_record_union__not_equal_no_narrow
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+
+          if event[:type] != "CLICK"
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 4, column: 2)
+      assert_equal "::event", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_narrow_record_union__optional_key_nil_check
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type a = { ?type: "A", x: Integer }
+          type b = { type: "B", y: Integer }
+          type v = a | b
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          v = (_ = nil) #: v
+
+          if v[:type].nil?
+            v[:x]
+          end
+
+          # Re-declared so the narrowing above doesn't leak into the env below.
+          v = (_ = nil) #: v
+
+          if v[:type]
+            v
+          else
+            v[:x]
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 4, column: 7)
+      assert_equal "::Integer", typing.type_of(node: node).to_s
+
+      node, * = typing.source.find_nodes(line: 11, column: 2)
+      assert_equal "::v", typing.type_of(node: node).to_s
+
+      node, * = typing.source.find_nodes(line: 13, column: 7)
+      assert_equal "::Integer", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_narrow_record_union__is_a_no_narrow
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+
+          if event[:type].is_a?(String)
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 4, column: 2)
+      assert_equal "::event", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_narrow_record_union__member_without_key_kept
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type click_event = { type: "CLICK", position: Integer }
+          type keyup_event = { type: "KEYUP", key: String }
+          type other       = { name: String }
+          type ev          = click_event | keyup_event | other
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          ev = (_ = nil) #: ev
+
+          case ev[:type]
+          when "CLICK"
+            ev
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "(::click_event | ::other)", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_narrow_record_union__alias_key_type
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type a_kind = "A"
+          type a = { type: a_kind, x: Integer }
+          type b = { type: "B", y: Integer }
+          type ab = a | b
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          v = (_ = nil) #: ab
+
+          case v[:type]
+          when "B"
+            v
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "::b", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_narrow_record_union__union_key_type
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type e1 = { type: "A" | "B" }
+          type e2 = { type: "C" }
+          type ev = e1 | e2
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          ev = (_ = nil) #: ev
+
+          case ev[:type]
+          when "C"
+            ev
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "::e2", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_narrow_record_union__nested_hash_key_no_narrow
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          type e1 = { type: { kind: "A" } }
+          type e2 = { type: "C" }
+          type ev = e1 | e2
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          ev = (_ = nil) #: ev
+
+          case ev[:type]
+          when "C"
+            ev
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "::ev", typing.type_of(node: node).to_s
+    end
+  end
+
+  def test_narrow_record_union__non_lvar_receiver_and_dynamic_key_no_narrow
+    run_type_check_test(
+      signatures: { "a.rbs" => RECORD_UNION_RBS },
+      code: {
+        "a.rb" => <<~RUBY
+          event = (_ = nil) #: event
+          k = :type #: Symbol
+
+          if (event2 = event)[:type] == "CLICK"
+            event2
+          end
+
+          if event[k] == "CLICK"
+            event
+          end
+
+          if event.fetch(:type) == "CLICK"
+            event
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    ) do |typings|
+      typing = typings["a.rb"] or raise
+
+      node, * = typing.source.find_nodes(line: 5, column: 2)
+      assert_equal "::event", typing.type_of(node: node).to_s
+
+      node, * = typing.source.find_nodes(line: 9, column: 2)
+      assert_equal "::event", typing.type_of(node: node).to_s
+
+      node, * = typing.source.find_nodes(line: 13, column: 2)
+      assert_equal "::event", typing.type_of(node: node).to_s
+    end
+  end
+
   def test_case_when__bool_value
     run_type_check_test(
       signatures: {
@@ -1466,17 +2155,801 @@ class TypeCheckTest < Minitest::Test
           diagnostics:
           - range:
               start:
-                line: 4
-                character: 18
+                line: 3
+                character: 6
               end:
-                line: 6
-                character: 7
+                line: 3
+                character: 9
             severity: ERROR
             message: |-
-              Cannot allow block body have type `::Symbol` because declared as type `T`
+              Cannot allow method body have type `::Symbol` because declared as type `T`
                 ::Symbol <: T
-            code: Ruby::BlockBodyTypeMismatch
+            code: Ruby::MethodBodyTypeMismatch
         YAML
+    )
+  end
+
+  def test_type_inference__block_call_masgn
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.measure: [A] () { () -> A } -> A
+            def self.pair: () -> [Integer, String]
+            def self.ints: () -> Array[Integer]
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a, b = BlockCall.measure { BlockCall.pair }
+          a.foo
+          b.foo
+
+          c, d = BlockCall.measure do
+            [1, "foo"]
+          end
+          c.foo
+          d.foo
+
+          e, f = [BlockCall.measure { 1 }, :foo]
+          e.foo
+
+          g, h = BlockCall.measure { BlockCall.ints }
+          g.foo
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 2
+                character: 2
+              end:
+                line: 2
+                character: 5
+            severity: ERROR
+            message: Type `::Integer` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 3
+                character: 2
+              end:
+                line: 3
+                character: 5
+            severity: ERROR
+            message: Type `::String` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 8
+                character: 2
+              end:
+                line: 8
+                character: 5
+            severity: ERROR
+            message: Type `::Integer` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 9
+                character: 2
+              end:
+                line: 9
+                character: 5
+            severity: ERROR
+            message: Type `::String` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 12
+                character: 2
+              end:
+                line: 12
+                character: 5
+            severity: ERROR
+            message: Type `::Integer` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 15
+                character: 2
+              end:
+                line: 15
+                character: 5
+            severity: ERROR
+            message: Type `(::Integer | nil)` does not have method `foo`
+            code: Ruby::NoMethod
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_masgn_variables
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.measure: [A] () { () -> A } -> A
+            def self.pair: () -> [Integer, String]
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          # @type var a: Integer?
+          a, b = BlockCall.measure { BlockCall.pair }
+          b.foo
+
+          c = 1
+          d = 2
+          c, d = BlockCall.measure { ["foo", 3] }
+          c.foo
+          d.foo
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 3
+                character: 2
+              end:
+                line: 3
+                character: 5
+            severity: ERROR
+            message: Type `::String` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 8
+                character: 2
+              end:
+                line: 8
+                character: 5
+            severity: ERROR
+            message: Type `::String` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 9
+                character: 2
+              end:
+                line: 9
+                character: 5
+            severity: ERROR
+            message: Type `::Integer` does not have method `foo`
+            code: Ruby::NoMethod
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_hint
+    # The block body is typed with the hint, and `Box` gets `Integer?` from the hint because it's invariant
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.measure: [A] () { () -> A } -> A
+            def self.wrap: [A] () { () -> A } -> BlockCall::Box[A]
+          end
+
+          class BlockCall::Box[A]
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          # @type var x: [:ok, untyped]
+          x = BlockCall.measure { [:ok, 1] }
+
+          # @type var y: BlockCall::Box[Integer?]
+          y = BlockCall.wrap { 1 }
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_hint_unsatisfiable
+    # The hint is ignored, and the mismatch is reported at the assignment
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.measure: [A] () { () -> A } -> A
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          # @type var x: String
+          x = BlockCall.measure { 1 }
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 2
+                character: 0
+              end:
+                line: 2
+                character: 27
+            severity: ERROR
+            message: |-
+              Cannot assign a value of type `::Integer` to a variable of type `::String`
+                ::Integer <: ::String
+                  ::Numeric <: ::String
+                    ::Object <: ::String
+                      ::BasicObject <: ::String
+            code: Ruby::IncompatibleAssignment
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_hint_jump
+    # The values of `next` are given to the type variable, and the values of `break` to the block call
+    # `a` and `c` are `Integer?`
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.measure: [A] () { () -> A } -> A
+            def self.cond: () -> bool
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a, b = BlockCall.measure do
+            next [nil, nil] if BlockCall.cond
+            [1, "foo"]
+          end
+          a.foo
+
+          c, d = BlockCall.measure do
+            break [nil, nil] if BlockCall.cond
+            [1, "foo"]
+          end
+          c.foo
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 5
+                character: 2
+              end:
+                line: 5
+                character: 5
+            severity: ERROR
+            message: Type `(nil | ::Integer)` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 11
+                character: 2
+              end:
+                line: 11
+                character: 5
+            severity: ERROR
+            message: Type `(nil | ::Integer)` does not have method `foo`
+            code: Ruby::NoMethod
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_hint_next
+    # The hint is ignored when the value of `next` is incompatible with it, and the mismatch is reported at the assignment, as it is for the block body
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.measure: [A] () { () -> A } -> A
+            def self.cond: () -> bool
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          # @type var x: String
+          x = BlockCall.measure do
+            next 1 if BlockCall.cond
+            "foo"
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 2
+                character: 0
+              end:
+                line: 5
+                character: 3
+            severity: ERROR
+            message: |-
+              Cannot assign a value of type `(::Integer | ::String)` to a variable of type `::String`
+                (::Integer | ::String) <: ::String
+                  ::Integer <: ::String
+                    ::Numeric <: ::String
+                      ::Object <: ::String
+                        ::BasicObject <: ::String
+            code: Ruby::IncompatibleAssignment
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_break_type_variable
+    # The value of `break` has the type of a type variable that is solved after the block body, and gets the solution
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.gen: [A] () { (A) -> A } -> A
+            def self.cond: () -> bool
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a = BlockCall.gen do |x|
+            break x if BlockCall.cond
+            1
+          end
+          a.foo
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 5
+                character: 2
+              end:
+                line: 5
+                character: 5
+            severity: ERROR
+            message: Type `::Integer` does not have method `foo`
+            code: Ruby::NoMethod
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_break_overload
+    # The value of `break` is typed with each of the overloads of `over`, and the type is from the one that is chosen
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.each_int: () { (Integer) -> void } -> self
+            def self.over: (Array[Integer], untyped, String) -> void
+                         | (Array[String], untyped, Integer) -> void
+            def self.cond: () -> bool
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a = BlockCall.each_int do |i|
+            BlockCall.over(z = [], (if BlockCall.cond then break z else 1 end), 1)
+          end
+          a.foo
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 4
+                character: 2
+              end:
+                line: 4
+                character: 5
+            severity: ERROR
+            message: Type `(singleton(::BlockCall) | ::Array[::String])` does not have method
+              `foo`
+            code: Ruby::NoMethod
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_jump_scope
+    # The `break` and `next` in the nested blocks and loops are not of the outer block
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.measure: [A] () { () -> A } -> A
+            def self.each_int: () { (Integer) -> void } -> self
+            def self.cond: () -> bool
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a = BlockCall.each_int do |i|
+            BlockCall.each_int { break "foo" }
+            while BlockCall.cond
+              break :sym
+            end
+            -> { next 1.0 }
+            break 3 if i > 1
+          end
+          a.foo
+
+          b = BlockCall.measure do
+            BlockCall.measure { next "foo" }
+            -> { next 1.0 }
+            next 3 if BlockCall.cond
+            :sym
+          end
+          b.foo
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 9
+                character: 2
+              end:
+                line: 9
+                character: 5
+            severity: ERROR
+            message: Type `(singleton(::BlockCall) | ::Integer)` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 17
+                character: 2
+              end:
+                line: 17
+                character: 5
+            severity: ERROR
+            message: Type `(::Integer | ::Symbol)` does not have method `foo`
+            code: Ruby::NoMethod
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_break
+    # The block call evaluates to the return type of the method or the values of `break`
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.measure: [A] () { () -> A } -> A
+            def self.map_like: [A] () { () -> A } -> Array[A]
+            def self.each_int: () { (Integer) -> void } -> self
+            def self.cond: () -> bool
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a = BlockCall.measure do
+            break 1 if BlockCall.cond
+            "foo"
+          end
+          a.foo
+
+          b = BlockCall.map_like do
+            break :sym if BlockCall.cond
+            "foo"
+          end
+          b.foo
+
+          c = BlockCall.each_int do |i|
+            break i if i > 1
+          end
+          c.foo
+
+          d = BlockCall.each_int do |i|
+            break if i > 1
+          end
+          d.foo
+
+          # @type var e: Array[Integer] | singleton(BlockCall)
+          e = BlockCall.each_int do |i|
+            break [] if i > 1
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 5
+                character: 2
+              end:
+                line: 5
+                character: 5
+            severity: ERROR
+            message: Type `(::String | ::Integer)` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 11
+                character: 2
+              end:
+                line: 11
+                character: 5
+            severity: ERROR
+            message: Type `(::Array[::String] | ::Symbol)` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 16
+                character: 2
+              end:
+                line: 16
+                character: 5
+            severity: ERROR
+            message: Type `(singleton(::BlockCall) | ::Integer)` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 21
+                character: 2
+              end:
+                line: 21
+                character: 5
+            severity: ERROR
+            message: Type `(singleton(::BlockCall) | nil)` does not have method `foo`
+            code: Ruby::NoMethod
+      YAML
+    )
+  end
+
+  def test_type_inference__block_call_next
+    # The block evaluates to the values of `next`, which are given to the type variables
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.measure: [A] () { () -> A } -> A
+            def self.ints: () { (Integer) -> Integer } -> void
+            def self.cond: () -> bool
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a = BlockCall.measure do
+            next 1 if BlockCall.cond
+            "foo"
+          end
+          a.foo
+
+          b = -> do
+            next 1 if BlockCall.cond
+            "foo"
+          end
+          b.foo
+
+          BlockCall.ints do |i|
+            next "foo" if BlockCall.cond
+            i
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 5
+                character: 2
+              end:
+                line: 5
+                character: 5
+            severity: ERROR
+            message: Type `(::Integer | ::String)` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 11
+                character: 2
+              end:
+                line: 11
+                character: 5
+            severity: ERROR
+            message: Type `^() -> (::String | ::Integer)` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 14
+                character: 2
+              end:
+                line: 14
+                character: 12
+            severity: ERROR
+            message: |-
+              Cannot break with a value of type `::String` because type `::Integer` is assumed
+                ::String <: ::Integer
+                  ::Object <: ::Integer
+                    ::BasicObject <: ::Integer
+            code: Ruby::BreakTypeMismatch
+      YAML
+    )
+  end
+
+  def test_type_inference__loop_break
+    # The loop evaluates to `nil` or the values of `break`
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class BlockCall
+            def self.cond: () -> bool
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a = while BlockCall.cond
+            break 1 if BlockCall.cond
+          end
+          a.foo
+
+          b = (begin
+            break "foo" if BlockCall.cond
+          end until BlockCall.cond)
+          b.foo
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 4
+                character: 2
+              end:
+                line: 4
+                character: 5
+            severity: ERROR
+            message: Type `(nil | ::Integer)` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 9
+                character: 2
+              end:
+                line: 9
+                character: 5
+            severity: ERROR
+            message: Type `(nil | ::String)` does not have method `foo`
+            code: Ruby::NoMethod
+      YAML
+    )
+  end
+
+  def test_type_inference__for_break
+    # The `for` loop evaluates to the collection or the values of `break`
+    # The `break` and `next` in the loop are not of the outer block or loop
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class ForTest
+            def self.ints: () -> Array[Integer]
+            def self.measure: [A] () { () -> A } -> A
+            def self.cond: () -> bool
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a = ForTest.ints.each do |i|
+            f = for j in [1, 2]
+              break :sym if ForTest.cond
+            end
+            f.foo
+          end
+          a.foo
+
+          b = ForTest.measure do
+            for j in [1, 2]
+              next "str" if ForTest.cond
+            end
+            1
+          end
+          b.foo
+
+          c = while ForTest.cond
+            for j in [1, 2]
+              break 1.0 if ForTest.cond
+            end
+          end
+          c.foo
+
+          for j in [1, 2]
+            break if ForTest.cond
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 5
+                character: 4
+              end:
+                line: 5
+                character: 7
+            severity: ERROR
+            message: Type `(::Array[::Integer] | ::Symbol)` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 7
+                character: 2
+              end:
+                line: 7
+                character: 5
+            severity: ERROR
+            message: Type `::Array[::Integer]` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 11
+                character: 4
+              end:
+                line: 11
+                character: 14
+            severity: ERROR
+            message: The value given to next will be ignored
+            code: Ruby::UnexpectedJumpValue
+          - range:
+              start:
+                line: 15
+                character: 2
+              end:
+                line: 15
+                character: 5
+            severity: ERROR
+            message: Type `::Integer` does not have method `foo`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 22
+                character: 2
+              end:
+                line: 22
+                character: 5
+            severity: ERROR
+            message: Type `nil` does not have method `foo`
+            code: Ruby::NoMethod
+      YAML
     )
   end
 
@@ -4546,6 +6019,67 @@ class TypeCheckTest < Minitest::Test
     )
   end
 
+  def test_tuple_with_union_element_returned_as_union_of_tuples
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class TupleWithUnionElement
+            def f: (String? x) -> ([String, Integer] | [nil, Integer])
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          class TupleWithUnionElement
+            def f(x) = [x, 1]
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    )
+  end
+
+  def test_tuple_with_union_element_over_distribution_limit
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class TupleOverDistributionLimit
+            def f: (String? x) -> ([String, String?, String?, String?, String?, String?] | [nil, String?, String?, String?, String?, String?])
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          class TupleOverDistributionLimit
+            def f(x) = [x, x, x, x, x, x]
+          end
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 2
+                character: 6
+              end:
+                line: 2
+                character: 7
+            severity: ERROR
+            message: |-
+              Cannot allow method body have type `[(::String | nil), (::String | nil), (::String | nil), (::String | nil), (::String | nil), (::String | nil)]` because declared as type `([::String, (::String | nil), (::String | nil), (::String | nil), (::String | nil), (::String | nil)] | [nil, (::String | nil), (::String | nil), (::String | nil), (::String | nil), (::String | nil)])`
+                [(::String | nil), (::String | nil), (::String | nil), (::String | nil), (::String | nil), (::String | nil)] <: ([::String, (::String | nil), (::String | nil), (::String | nil), (::String | nil), (::String | nil)] | [nil, (::String | nil), (::String | nil), (::String | nil), (::String | nil), (::String | nil)])
+                  Skipped expanding the tuple into 64 tuples with limit of `32`; specify $STEEP_SUBTYPING_TUPLE_DISTRIBUTION_LIMIT env var to override the limit
+            code: Ruby::MethodBodyTypeMismatch
+      YAML
+    )
+  end
+
   def test_or_asgn_send_chain
     run_type_check_test(
       signatures: {
@@ -4894,6 +6428,102 @@ class TypeCheckTest < Minitest::Test
             severity: ERROR
             message: Method `bar` is defined in undeclared module
             code: Ruby::MethodDefinitionInUndeclaredModule
+      YAML
+    )
+  end
+
+  def test_tuple_splat_into_core_methods
+    run_type_check_test(
+      signatures: {},
+      code: {
+        "a.rb" => <<~RUBY
+          10.gcd(*[6])
+
+          h1 = { 1 => 2.0 }
+          h2 = { 0 => 1.0 }
+          h1.each_with_index { |pair, _index| h2.[]=(*pair) }
+
+          "a".concat(*["b"])
+          b = ["b"]
+          "a".concat(*b)
+
+          [1, 2].fetch(*[0, 3])
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics: []
+      YAML
+    )
+  end
+
+  def test_tuple_splat_args
+    run_type_check_test(
+      signatures: {
+        "a.rbs" => <<~RBS
+          class TupleSplatArgs
+            def req_rest: (String, *Integer) -> void
+            def opt: (String, ?Integer) -> void
+            def gen: (String, Integer) -> void
+            def gen3: (String, Integer, Integer) -> void
+          end
+        RBS
+      },
+      code: {
+        "a.rb" => <<~RUBY
+          a = TupleSplatArgs.new
+          pair = ["1", 2] #: [String, Integer]
+
+          a.req_rest(*["1", 2, 3])
+          a.opt(*["1"])
+          a.opt(*["1", 2])
+          a.gen3(*pair, 3)
+
+          a.opt(*["1", "2"])
+          a.gen(*["1"])
+          a.gen(*["1", 2, 3])
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 9
+                character: 6
+              end:
+                line: 9
+                character: 17
+            severity: ERROR
+            message: |-
+              Cannot pass a value of type `[::String, ::String]` as an argument of type `[::String, ::Integer]`
+                [::String, ::String] <: [::String, ::Integer]
+                  ::String <: ::Integer
+                    ::Object <: ::Integer
+                      ::BasicObject <: ::Integer
+            code: Ruby::ArgumentTypeMismatch
+          - range:
+              start:
+                line: 10
+                character: 2
+              end:
+                line: 10
+                character: 13
+            severity: ERROR
+            message: More positional arguments are required
+            code: Ruby::InsufficientPositionalArguments
+          - range:
+              start:
+                line: 11
+                character: 6
+              end:
+                line: 11
+                character: 18
+            severity: ERROR
+            message: Unexpected positional argument
+            code: Ruby::UnexpectedPositionalArgument
       YAML
     )
   end

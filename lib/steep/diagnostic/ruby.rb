@@ -48,8 +48,12 @@ module Steep
         def detail_lines
           lines = StringIO.new.tap do |io|
             failure_path = result.failure_path || []
-            failure_path.reverse_each.map do |result|
-              relation_message(result.relation)
+            failure_path.reverse_each.flat_map do |result|
+              if result.is_a?(Subtyping::Result::Failure) && result.error.is_a?(Subtyping::Result::Failure::TupleDistributionLimit)
+                [relation_message(result.relation), result.error.message]
+              else
+                [relation_message(result.relation)]
+              end
             end.compact.each.with_index(1) do |message, index|
               io.puts "#{"  " * (index)}#{message}"
             end
@@ -376,23 +380,6 @@ module Steep
 
         def header_line
           "Cannot break with a value of type `#{actual}` because type `#{expected}` is assumed"
-        end
-      end
-
-      class ImplicitBreakValueMismatch < Base
-        attr_reader :jump_type
-        attr_reader :result
-
-        include ResultPrinter
-
-        def initialize(node:, jump_type:, result:)
-          super(node: node)
-          @jump_type = jump_type
-          @result = result
-        end
-
-        def header_line
-          "Breaking without a value may result an error because a value of type `#{jump_type}` is expected"
         end
       end
 
@@ -1104,7 +1091,6 @@ module Steep
             DifferentMethodParameterKind => :hint,
             FallbackAny => :hint,
             FalseAssertion => :hint,
-            ImplicitBreakValueMismatch => :hint,
             IncompatibleAnnotation => :hint,
             IncompatibleArgumentForwarding => :warning,
             IncompatibleAssignment => :hint,
@@ -1169,7 +1155,6 @@ module Steep
             DifferentMethodParameterKind => :error,
             FallbackAny => :warning,
             FalseAssertion => :error,
-            ImplicitBreakValueMismatch => :information,
             IncompatibleAnnotation => :error,
             IncompatibleArgumentForwarding => :error,
             IncompatibleAssignment => :error,
@@ -1233,7 +1218,6 @@ module Steep
             DifferentMethodParameterKind => nil,
             FallbackAny => nil,
             FalseAssertion => nil,
-            ImplicitBreakValueMismatch => nil,
             IncompatibleAnnotation => nil,
             IncompatibleArgumentForwarding => :information,
             IncompatibleAssignment => :hint,
@@ -1290,6 +1274,15 @@ module Steep
         @silent ||= ALL.each.with_object({}) do |klass, hash| #$ template
           hash[klass] = nil
         end.freeze
+      end
+
+      def self.const_missing(name)
+        if name == :ImplicitBreakValueMismatch
+          warn "`Steep::Diagnostic::Ruby::ImplicitBreakValueMismatch` has been removed and has no effect. Use `Steep::Diagnostic::Ruby::BreakTypeMismatch` instead.", uplevel: 1
+          return @removed_diagnostic ||= _ = Class.new(Base)
+        end
+
+        super
       end
     end
   end

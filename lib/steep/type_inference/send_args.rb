@@ -32,10 +32,18 @@ module Steep
           def node_type
             case node.type
             when :splat
-              AST::Builtin::Array.instance_type(type)
+              # `*nil` passes no arguments
+              AST::Types::Union.build(types: [AST::Builtin::Array.instance_type(type), AST::Builtin.nil_type])
             else
               type
             end
+          end
+        end
+
+        # A splatted tuple, whose `type` is the type of the whole tuple, not of its elements
+        class TupleSplatPair < NodeTypePair
+          def node_type
+            type
           end
         end
 
@@ -597,7 +605,7 @@ module Steep
                   case ts
                   when Array
                     ty = AST::Types::Tuple.new(types: ts.map(&:type))
-                    yield PositionalArgs::NodeTypePair.new(node: value.node, type: ty)
+                    yield PositionalArgs::TupleSplatPair.new(node: value.node, type: ty)
                   when PositionalArgs::UnexpectedArg
                     errors << ts
                     yield ts

@@ -91,11 +91,83 @@ class TypeCheckTest < Minitest::Test
 
   def test_case_when__narrow_pure_call: () -> untyped
 
+  RECORD_UNION_RBS: ::String
+
+  def test_case_when__narrow_record_union: () -> untyped
+
+  def test_case_when__narrow_record_union__else: () -> untyped
+
+  def test_case_when__narrow_record_union__multiple_patterns: () -> untyped
+
+  def test_if__narrow_record_union: () -> untyped
+
+  def test_if__narrow_record_union__nilable_literal_discriminant: () -> untyped
+
+  def test_narrow_record_union__non_literal_key_member_kept: () -> untyped
+
+  def test_narrow_record_union__keeps_previously_refined_pure_calls: () -> untyped
+
+  def test_narrow_record_union__refined_pure_call_is_narrowed_again_by_receiver: () -> untyped
+
+  def test_narrow_record_union__untyped_member_keeps_refined_pure_call: () -> untyped
+
+  def test_narrow_record_union__optional_key: () -> untyped
+
+  def test_narrow_record_union__alias_preserved: () -> untyped
+
+  def test_case_when__narrow_record_union__invalidates_dependent_pure_call: () -> untyped
+
+  def test_if__narrow_record_union__case_eq_reversed: () -> untyped
+
+  def test_if__narrow_record_union__eq_reversed_no_narrow: () -> untyped
+
+  def test_if__narrow_record_union__not_equal_no_narrow: () -> untyped
+
+  def test_narrow_record_union__optional_key_nil_check: () -> untyped
+
+  def test_narrow_record_union__is_a_no_narrow: () -> untyped
+
+  def test_narrow_record_union__member_without_key_kept: () -> untyped
+
+  def test_narrow_record_union__alias_key_type: () -> untyped
+
+  def test_narrow_record_union__union_key_type: () -> untyped
+
+  def test_narrow_record_union__nested_hash_key_no_narrow: () -> untyped
+
+  def test_narrow_record_union__non_lvar_receiver_and_dynamic_key_no_narrow: () -> untyped
+
   def test_case_when__bool_value: () -> untyped
 
   def test_type_inference__nested_block: () -> untyped
 
   def test_type_inference__nested_block_free_variable: () -> untyped
+
+  def test_type_inference__block_call_masgn: () -> untyped
+
+  def test_type_inference__block_call_masgn_variables: () -> untyped
+
+  def test_type_inference__block_call_hint: () -> untyped
+
+  def test_type_inference__block_call_hint_unsatisfiable: () -> untyped
+
+  def test_type_inference__block_call_hint_jump: () -> untyped
+
+  def test_type_inference__block_call_hint_next: () -> untyped
+
+  def test_type_inference__block_call_break_type_variable: () -> untyped
+
+  def test_type_inference__block_call_break_overload: () -> untyped
+
+  def test_type_inference__block_call_jump_scope: () -> untyped
+
+  def test_type_inference__block_call_break: () -> untyped
+
+  def test_type_inference__block_call_next: () -> untyped
+
+  def test_type_inference__loop_break: () -> untyped
+
+  def test_type_inference__for_break: () -> untyped
 
   def test_type_narrowing__local_variable_safe_navigation_operator: () -> untyped
 
@@ -294,6 +366,10 @@ class TypeCheckTest < Minitest::Test
 
   def test_tuple_type_with_if_branch: () -> untyped
 
+  def test_tuple_with_union_element_returned_as_union_of_tuples: () -> untyped
+
+  def test_tuple_with_union_element_over_distribution_limit: () -> untyped
+
   def test_or_asgn_send_chain: () -> untyped
 
   def test_block_pass_optional_block: () -> untyped
@@ -313,4 +389,8 @@ class TypeCheckTest < Minitest::Test
   def test_array_literal_with_pair_interface_hint_mismatch: () -> untyped
 
   def test_defs_on_untyped_receiver: () -> untyped
+
+  def test_tuple_splat_into_core_methods: () -> untyped
+
+  def test_tuple_splat_args: () -> untyped
 end

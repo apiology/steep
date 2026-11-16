@@ -15,6 +15,7 @@ class SubtypingTest < Minitest::Test
 
   Failure: untyped
 
+  # The type names are kept as they are written, like `String` for `::String`
   def parse_type: (untyped string, checker: untyped, ?variables: untyped) -> untyped
 
   def parse_method_type: (untyped string, checker: untyped, ?variables: untyped) -> untyped
@@ -88,6 +89,10 @@ class SubtypingTest < Minitest::Test
   def test_constraints2: () -> untyped
 
   def test_tuple_subtyping: () -> untyped
+
+  def test_tuple_with_union_element_to_union_of_tuples: () -> untyped
+
+  def test_tuple_with_union_element_to_union_of_tuples__limit: () -> untyped
 
   def test_expand_alias: () -> untyped
 

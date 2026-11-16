@@ -75,14 +75,15 @@ end
   Constraints = Subtyping::Constraints
   Failure = Subtyping::Result::Failure
 
+  # The type names are kept as they are written, like `String` for `::String`
   def parse_type(string, checker:, variables: [])
     type = RBS::Parser.parse_type(string, variables: variables)
-    checker.factory.type(type)
+    checker.factory.for_unresolved_type_names.type(type)
   end
 
   def parse_method_type(string, checker:, variables: [])
     type = RBS::Parser.parse_method_type(string, variables: variables)
-    checker.factory.method_type type
+    checker.factory.for_unresolved_type_names.method_type type
   end
 
   def parse_relation(sub_type, super_type, checker:)
@@ -724,6 +725,41 @@ end
       assert_success_check checker, "[::Integer, ::String]", "::String | ::Array[untyped]"
       assert_success_check checker, "[::Integer, ::String]", "[untyped, untyped]"
       assert_success_check checker, "[1, 2, 3]", "[::Integer, ::Integer, ::Integer]"
+    end
+  end
+
+  def test_tuple_with_union_element_to_union_of_tuples
+    with_checker do |checker|
+      assert_success_check checker, "[::String?, ::Integer]", "[::String, ::Integer] | [nil, ::Integer]"
+      assert_success_check checker, "[::String | ::Symbol, ::Integer | nil]", "[::String, ::Integer] | [::Symbol, ::Integer?] | [::String, nil]"
+      assert_success_check checker, "[::String?, ::Integer]", "[::String, ::Integer] | [nil, ::Integer] | ::Symbol"
+
+      assert_fail_check checker, "[::String | ::Symbol, ::Integer]", "[::String, ::Integer] | [nil, ::Integer]"
+      assert_fail_check checker, "[::String | ::Symbol, ::Integer?]", "[::String, ::Integer] | [::Symbol, ::Integer?]"
+      assert_fail_check checker, "[::String?, ::Integer]", "[::String, ::Integer, nil] | [nil, ::Integer, nil]"
+    end
+  end
+
+  def test_tuple_with_union_element_to_union_of_tuples__limit
+    with_checker do |checker|
+      # 2^6 combinations exceed the limit, so the tuple is not split, and the failure says so.
+      assert_fail_check checker,
+                        "[::String?, ::String?, ::String?, ::String?, ::String?, ::String?]",
+                        "[::String, ::String?, ::String?, ::String?, ::String?, ::String?] | [nil, ::String?, ::String?, ::String?, ::String?, ::String?]" do |result|
+        assert_instance_of Failure::TupleDistributionLimit, result.error
+        assert_equal 64, result.error.size
+        assert_equal 32, result.error.limit
+      end
+
+      # A tuple over the limit still matches a union member without being split.
+      assert_success_check checker,
+                           "[::String?, ::String?, ::String?, ::String?, ::String?, ::String?]",
+                           "[::String?, ::String?, ::String?, ::String?, ::String?, ::String?] | ::Symbol"
+
+      # 2^5 combinations are split.
+      assert_success_check checker,
+                           "[::String?, ::String?, ::String?, ::String?, ::String?]",
+                           "[::String, ::String?, ::String?, ::String?, ::String?] | [nil, ::String?, ::String?, ::String?, ::String?]"
     end
   end
 

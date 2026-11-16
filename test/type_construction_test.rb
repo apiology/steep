@@ -705,8 +705,10 @@ end
         #       ^
         assert_equal parse_type("::_A"), typing.type_of(node: dig(source.node, 1, 2, 0, 0))
 
-        assert_equal 1, typing.errors.size
-        assert_break_type_mismatch typing.errors[0], expected: parse_type("::_C"), actual: parse_type("::_A")
+        # The block call evaluates to the return type of the method or the value of `break`
+        assert_equal parse_type("::_C | ::_A"), typing.type_of(node: dig(source.node, 1))
+
+        assert_no_error typing
       end
     end
   end
@@ -2509,6 +2511,58 @@ a.gen(*b)
         construction.synthesize(source.node)
 
         assert_no_error typing
+      end
+    end
+  end
+
+  def test_splat_arg_tuple
+    with_checker <<-EOF do |checker|
+class A
+  def initialize: () -> untyped
+  def gen: (String, Integer) -> String
+  def gen_rest: (*[String, Integer]) -> String
+end
+    EOF
+      source = parse_ruby(<<-'EOF')
+a = A.new
+pair = ["1", 2] #: [String, Integer]
+a.gen(*pair)
+a.gen(*["1", 2])
+pairs = [pair]
+a.gen_rest(*pairs)
+      EOF
+
+      with_standard_construction(checker, source) do |construction, typing|
+        construction.synthesize(source.node)
+
+        assert_no_error typing
+      end
+    end
+  end
+
+  def test_splat_arg_tuple_mismatch
+    with_checker <<-EOF do |checker|
+class A
+  def initialize: () -> untyped
+  def gen: (String, Integer) -> String
+end
+    EOF
+      source = parse_ruby(<<-'EOF')
+a = A.new
+pair = [1, "2"] #: [Integer, String]
+a.gen(*pair)
+      EOF
+
+      with_standard_construction(checker, source) do |construction, typing|
+        construction.synthesize(source.node)
+
+        assert_typing_error(typing, size: 1) do |errors|
+          assert_any!(errors) do |error|
+            assert_instance_of Diagnostic::Ruby::ArgumentTypeMismatch, error
+            assert_equal parse_type("[::Integer, ::String]"), error.actual
+            assert_equal parse_type("[::String, ::Integer]"), error.expected
+          end
+        end
       end
     end
   end
@@ -7062,8 +7116,8 @@ end
 
   def test_send_rbs_error
     with_checker(<<RBS) do |checker|
-class SendTest
-  def foo: () -> String123
+class SendTest < Array[String123]
+  def foo: () -> String
 end
 RBS
       source = parse_ruby(<<-RUBY)
@@ -7082,6 +7136,39 @@ test.foo
         end
 
         assert_equal parse_type("untyped"), type
+      end
+    end
+  end
+
+  def test_undefined_type_name
+    with_checker(<<~RBS) do |checker|
+      class UndefinedTypeNameTest
+        def self.foo: (String123) -> String123
+      end
+
+      UNDEFINED_TYPE_NAME_TEST: Array[_String123]
+
+      $undefined_type_name_test: string123
+    RBS
+      source = parse_ruby(<<~RUBY)
+        x = UndefinedTypeNameTest.foo(1)
+        x.foo
+
+        y = UNDEFINED_TYPE_NAME_TEST.first #: String
+        y.size
+
+        z = $undefined_type_name_test
+        z.foo
+      RUBY
+
+      with_standard_construction(checker, source) do |construction, typing|
+        pair = construction.synthesize(source.node)
+
+        # The undefined type names are reported in the signature validation, and the type checker treats them as `untyped`
+        assert_no_error typing
+        assert_equal parse_type("untyped"), pair.context.type_env[:x]
+        assert_equal parse_type("::String"), pair.context.type_env[:y]
+        assert_equal parse_type("untyped"), pair.context.type_env[:z]
       end
     end
   end
@@ -7665,20 +7752,11 @@ end
 RUBY
 
       with_standard_construction(checker, source) do |construction, typing|
-        construction.synthesize(source.node)
+        type, _ = construction.synthesize(source.node)
 
-        assert_typing_error(typing, size: 2) do |errors|
-          assert_any!(errors) do |error|
-            assert_instance_of Diagnostic::Ruby::BreakTypeMismatch, error
-            assert_equal parse_type("::Integer"), error.actual
-            assert_equal parse_type("::String"), error.expected
-          end
-
-          assert_any!(errors) do |error|
-            assert_instance_of Diagnostic::Ruby::ImplicitBreakValueMismatch, error
-            assert_equal parse_type("::String"), error.jump_type
-          end
-        end
+        # The block call evaluates to the return type of the method or the values of `break`, which are not checked without `@type break`
+        assert_no_error typing
+        assert_equal parse_type("::String | ::Integer | nil"), type
       end
     end
   end
@@ -8459,6 +8537,31 @@ RUBY
     end
   end
 
+  def test_break_without_value_with_annotation
+    with_checker(<<RBS) do |checker|
+class NextTest
+  def foo: () { (String) -> Integer } -> String
+end
+RBS
+      source = parse_ruby(<<RUBY)
+NextTest.new.foo do |x|
+  # @type break: Symbol
+  break
+end
+RUBY
+
+      with_standard_construction(checker, source) do |construction, typing|
+        construction.synthesize(source.node)
+
+        assert_typing_error(typing, size: 1) do |errors|
+          assert_any!(errors) do |error|
+            assert_break_type_mismatch error, expected: parse_type("::Symbol"), actual: parse_type("nil")
+          end
+        end
+      end
+    end
+  end
+
   def test_break_without_value_to_block
     with_checker(<<RBS) do |checker|
 class NextTest
@@ -8472,14 +8575,11 @@ end
 RUBY
 
       with_standard_construction(checker, source) do |construction, typing|
-        construction.synthesize(source.node)
+        type, _ = construction.synthesize(source.node)
 
-        assert_typing_error(typing, size: 1) do |errors|
-          assert_any!(errors) do |error|
-            assert_instance_of Diagnostic::Ruby::ImplicitBreakValueMismatch, error
-            assert_equal parse_type("::String"), error.jump_type
-          end
-        end
+        # The block call evaluates to `nil` when the block breaks without a value
+        assert_no_error typing
+        assert_equal parse_type("::String | nil"), type
       end
     end
   end
@@ -8585,6 +8685,53 @@ EachNoParam.new.each(*a)
         assert_typing_error(typing, size: 1) do |errors|
           assert_any!(errors) do |error|
             assert_instance_of Diagnostic::Ruby::UnexpectedPositionalArgument, error
+          end
+        end
+      end
+    end
+  end
+
+  def test_splat_arg_nil
+    with_checker <<-EOF do |checker|
+class A
+  def initialize: () -> untyped
+  def gen: (*Integer) -> String
+end
+    EOF
+      source = parse_ruby(<<-'EOF')
+a = A.new
+b = [1] #: Array[Integer]?
+a.gen(*b)
+a.gen(*nil)
+      EOF
+
+      with_standard_construction(checker, source) do |construction, typing|
+        construction.synthesize(source.node)
+
+        assert_no_error typing
+      end
+    end
+  end
+
+  def test_splat_arg_nil_mismatch
+    with_checker <<-EOF do |checker|
+class A
+  def initialize: () -> untyped
+  def gen: (*Integer) -> String
+end
+    EOF
+      source = parse_ruby(<<-'EOF')
+a = A.new
+b = ["1"] #: Array[String]?
+a.gen(*b)
+      EOF
+
+      with_standard_construction(checker, source) do |construction, typing|
+        construction.synthesize(source.node)
+
+        assert_typing_error(typing, size: 1) do |errors|
+          assert_any!(errors) do |error|
+            assert_instance_of Diagnostic::Ruby::ArgumentTypeMismatch, error
           end
         end
       end
