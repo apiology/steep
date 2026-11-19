@@ -2412,7 +2412,14 @@ module Steep
                           end
               node_ = node.updated(node_type, [asgn, rhs_])
 
-              synthesize(node_, hint: hint)
+              type, constr = synthesize(node_, hint: hint)
+
+              # The writer call invalidates the pure reader call; give the next read the `||=` result type.
+              if node.type == :or_asgn && constr.context.type_env.pure_method_calls.key?(asgn)
+                constr = constr.update_type_env {|env| env.replace_pure_call_type(asgn, type) }
+              end
+
+              Pair.new(type: type, constr: constr)
             else
               Steep.logger.error { "#{node.type} with #{asgn.type} lhs is not supported"}
               fallback_to_any(node)
