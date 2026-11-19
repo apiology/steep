@@ -6065,6 +6065,9 @@ class TypeCheckTest < Minitest::Test
 
           hash.delete(key)
           hash[key] << 1
+
+          hash[key] ||= (key = "b"; [])
+          hash[key] << 1
         RUBY
       },
       expectations: <<~YAML
@@ -6077,6 +6080,16 @@ class TypeCheckTest < Minitest::Test
                 character: 10
               end:
                 line: 7
+                character: 12
+            severity: ERROR
+            message: Type `(::Array[::Integer] | nil)` does not have method `<<`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 10
+                character: 10
+              end:
+                line: 10
                 character: 12
             severity: ERROR
             message: Type `(::Array[::Integer] | nil)` does not have method `<<`
