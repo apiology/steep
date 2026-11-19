@@ -368,6 +368,8 @@ class TypeCheckTest < Minitest::Test
 
   def test_or_asgn_send_chain: () -> untyped
 
+  def test_or_asgn_index__narrows_following_read: () -> untyped
+
   def test_block_pass_optional_block: () -> untyped
 
   def test_block_pass_optional_block_mismatch: () -> untyped

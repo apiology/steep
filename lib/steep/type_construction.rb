@@ -2412,7 +2412,20 @@ module Steep
                           end
               node_ = node.updated(node_type, [asgn, rhs_])
 
-              synthesize(node_, hint: hint)
+              type, constr = synthesize(node_, hint: hint)
+
+              # The writer call invalidates the pure reader call; give the next read the `||=` result type.
+              # Skip it when the value reassigns a local the reader reads: `h[k] ||= (k = 1; v)` writes to the old `k`.
+              if node.type == :or_asgn && constr.context.type_env.pure_method_calls.key?(asgn)
+                read_lvars = each_descendant_node(asgn).filter_map {|n| n.children[0] if n.type == :lvar }
+                reassigned = [rhs, *each_descendant_node(rhs)].any? {|n| n.type == :lvasgn && read_lvars.include?(n.children[0]) }
+
+                unless reassigned
+                  constr = constr.update_type_env {|env| env.replace_pure_call_type(asgn, type) }
+                end
+              end
+
+              Pair.new(type: type, constr: constr)
             else
               Steep.logger.error { "#{node.type} with #{asgn.type} lhs is not supported"}
               fallback_to_any(node)

@@ -6054,6 +6054,50 @@ class TypeCheckTest < Minitest::Test
     )
   end
 
+  def test_or_asgn_index__narrows_following_read
+    run_type_check_test(
+      code: {
+        "a.rb" => <<~RUBY
+          hash = {} #: Hash[String, Array[Integer]]
+          key = "a" #: String
+          hash[key] ||= []
+          hash[key] << 1
+
+          hash.delete(key)
+          hash[key] << 1
+
+          hash[key] ||= (key = "b"; [])
+          hash[key] << 1
+        RUBY
+      },
+      expectations: <<~YAML
+        ---
+        - file: a.rb
+          diagnostics:
+          - range:
+              start:
+                line: 7
+                character: 10
+              end:
+                line: 7
+                character: 12
+            severity: ERROR
+            message: Type `(::Array[::Integer] | nil)` does not have method `<<`
+            code: Ruby::NoMethod
+          - range:
+              start:
+                line: 10
+                character: 10
+              end:
+                line: 10
+                character: 12
+            severity: ERROR
+            message: Type `(::Array[::Integer] | nil)` does not have method `<<`
+            code: Ruby::NoMethod
+      YAML
+    )
+  end
+
   def test_block_pass_optional_block
     run_type_check_test(
       signatures: {
